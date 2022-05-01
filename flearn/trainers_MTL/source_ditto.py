@@ -22,36 +22,15 @@ def process_y(raw_y_batch):
 class Server(BaseFedarated):
     def __init__(self, params, learner, dataset):
         print('Using global-regularized multi-task learning to Train')
-
-        self.corrupt_input = True  # True = input data for corrupted clients will be altered
-        self.corrupt_accuracy = []
-
         self.inner_opt = tf.train.GradientDescentOptimizer(params['learning_rate'])
-        # self.inner_opt = tf.train.FtrlOptimizer(params['learning_rate'])
-
         super(Server, self).__init__(params, learner, dataset)
-
-    def find_percentage_agreement(self, s1, s2):
-        match_count = 0  # initialize counter to 0
-        for idx, value in enumerate(s1):
-            if s2[idx] == value:
-                match_count += 1
-
-        percentage_agreement = match_count / len(s1)
-
-        return percentage_agreement
 
     def train(self):
         print('---{} workers per communication round---'.format(self.clients_per_round))
 
-        print("*"*10)
-        print(f"Number of Clients Total: {len(self.clients)}")
-
-
         np.random.seed(1234567+self.seed)
         corrupt_id = np.random.choice(range(len(self.clients)), size=self.num_corrupted, replace=False)
         print(corrupt_id)
-        print("*" * 10)
 
         if self.dataset == 'shakespeare':
             for c in self.clients:
@@ -61,18 +40,17 @@ class Server(BaseFedarated):
         batches = {}
         for idx, c in enumerate(self.clients):
             if idx in corrupt_id:
-                if self.corrupt_input:
-                    c.train_data['y'] = np.asarray(c.train_data['y'])
-                    if self.dataset == 'celeba':
-                        c.train_data['y'] = 1 - c.train_data['y']
-                    elif self.dataset == 'femnist':
-                        c.train_data['y'] = np.random.randint(0, 62, len(c.train_data['y']))  # [0, 62)
-                    elif self.dataset == 'shakespeare':
-                        c.train_data['y'] = np.random.randint(0, 80, len(c.train_data['y']))
-                    elif self.dataset == "vehicle":
-                        c.train_data['y'] = c.train_data['y'] * -1
-                    elif self.dataset == "fmnist":
-                        c.train_data['y'] = np.random.randint(0, 10, len(c.train_data['y']))
+                c.train_data['y'] = np.asarray(c.train_data['y'])
+                if self.dataset == 'celeba':
+                    c.train_data['y'] = 1 - c.train_data['y']
+                elif self.dataset == 'femnist':
+                    c.train_data['y'] = np.random.randint(0, 62, len(c.train_data['y']))  # [0, 62)
+                elif self.dataset == 'shakespeare':
+                    c.train_data['y'] = np.random.randint(0, 80, len(c.train_data['y']))
+                elif self.dataset == "vehicle":
+                    c.train_data['y'] = c.train_data['y'] * -1
+                elif self.dataset == "fmnist":
+                    c.train_data['y'] = np.random.randint(0, 10, len(c.train_data['y']))
 
             if self.dataset == 'celeba':
                 # due to a different data storage format
@@ -96,18 +74,15 @@ class Server(BaseFedarated):
                 tqdm.write('At round {} malicious test accu: {}'.format(i, np.sum(num_correct_test[corrupt_id]) * 1.0 / np.sum(num_test[corrupt_id])))
                 tqdm.write('At round {} benign test accu: {}'.format(i, np.sum(num_correct_test[non_corrupt_id]) * 1.0 / np.sum(num_test[non_corrupt_id])))
                 print("variance of the performance: ", np.var(num_correct_test[non_corrupt_id] / num_test[non_corrupt_id]))
-                print("Corruption Detection Average accuracy: ", sum(self.corrupt_accuracy) / len(self.corrupt_accuracy))
+
 
             # weighted sampling
             indices, selected_clients = self.select_clients(round=i, num_clients=self.clients_per_round)
 
-            raw_csolns = []
+            csolns = []
             losses = []
-            avg_losses = []
-            corrupt_validation = []
 
             for idx in indices:
-                client_losses = []
                 w_global_idx = copy.deepcopy(self.global_model)
                 c = self.clients[idx]
                 for _ in range(self.local_iters):
@@ -119,25 +94,15 @@ class Server(BaseFedarated):
 
 
                     if self.dynamic_lam:
-                        upper_lambda = 40
-                        step_size = 1
-                        client_side_learning = .05
 
                         model_tmp = copy.deepcopy(self.local_models[idx])
                         model_best = copy.deepcopy(self.local_models[idx])
                         tmp_loss = 10000
                         # pick a lambda locally based on validation data
-                        # x = [x / 10 for x in range(1, 21, 1)]  # increase time complexity to get better lambda
-                        # [0.1, 1, 2]
-
-                        for lam_id, candidate_lam in enumerate([x / 10 for x in range(1, upper_lambda, step_size)]):
-                        # for lam_id, candidate_lam in enumerate([0.1, 1, 2]):  # Paper's Solution
+                        for lam_id, candidate_lam in enumerate([0.1, 1, 2]):
                             for layer in range(len(grads[1])):
                                 eff_grad = grads[1][layer] + candidate_lam * (self.local_models[idx][layer] - self.global_model[layer])
-                                model_tmp[layer] = self.local_models[idx][layer] - client_side_learning * eff_grad
-
-                                # Paper's Solution
-                                # model_tmp[layer] = self.local_models[idx][layer] - self.learning_rate * eff_grad
+                                model_tmp[layer] = self.local_models[idx][layer] - self.learning_rate * eff_grad
 
                             c.set_params(model_tmp)
                             l = c.get_val_loss()
@@ -156,19 +121,16 @@ class Server(BaseFedarated):
                     self.client_model.set_params(w_global_idx)
                     loss = c.get_loss()
                     losses.append(loss)
-                    client_losses.append(loss)
                     _, grads, _ = c.solve_sgd(data_batch)
                     w_global_idx = self.client_model.get_params()
+
 
                 # get the difference (global model updates)
                 diff = [u - v for (u, v) in zip(w_global_idx, self.global_model)]
 
-                avg_losses.append(sum(client_losses)/self.local_iters)
-
 
                 # send the malicious updates
                 if idx in corrupt_id:
-                    corrupt_validation.append(True)
                     if self.boosting:
                         # scale malicious updates
                         diff = [self.clients_per_round * u for u in diff]
@@ -176,99 +138,11 @@ class Server(BaseFedarated):
                         # send random updates
                         stdev_ = get_stdev(diff)
                         diff = [np.random.normal(0, stdev_, size=u.shape) for u in diff]
-                else:
-                    corrupt_validation.append(False)
 
                 if self.q == 0:
-                    raw_csolns.append(diff)
+                    csolns.append(diff)
                 else:
-                    raw_csolns.append((np.exp(self.q * loss), diff))
-
-            # > Check Variables <
-
-            # print("=="*10)
-            # print("Number of Clients per round: ", self.clients_per_round)
-            # print("Number of losses: ", len(avg_losses))
-            # print("Number of diff: ", len(diff[0]))          # Weights
-            # print("Number of csolns: ", len(raw_csolns))  # client's update?
-            # print("Losses: ", avg_losses)
-
-            # > FILTER OUT BAD ACCURACIES <
-
-            # Outlier are < Q1−1.5×IQR (or) > Q3+1.5×IQR
-            q1 = np.percentile(avg_losses, 25)
-            q3 = np.percentile(avg_losses, 75)
-            iqr = q3 - q1
-
-            # outlier_bottom = q1 - (iqr*1.5)  # Low loss is a good thing (although could be over fitting)
-            outlier_top = q3 + (iqr*1.5)
-
-            loss_outliers = [x for x in avg_losses if x > outlier_top]
-            loss_outliers_index = [True if x > outlier_top else False for x in avg_losses]
-            # print("Loss outliers", loss_outliers)
-
-            # > FILTER OUT BAD WEIGHTS <
-
-            # The idea here is to flag clients as outliers for each layer
-            # Then, if a client was flagged for X percent of the layers, we will label the client as bad
-            # Weighted and random attacks are expected to lie outside of the expected range for the majority of layers
-
-            num_layers = len(raw_csolns[0][0])
-
-            outlier_counter = [0] * self.clients_per_round
-
-            # Client #, ? (use 0), layer #
-            for layer in range(num_layers):
-                layer_values = [raw_csolns[client][0][layer] for client in range(self.clients_per_round)]
-                tmp_q1 = np.percentile(layer_values, 25)
-                tmp_q3 = np.percentile(layer_values, 75)
-                tmp_iqr = tmp_q3 - tmp_q1
-                tmp_outlier_top = tmp_q3 + (tmp_iqr * 1.5)
-                # Identify which clients had outlier values for this layer
-                for clients_weight_index in range(len(layer_values)):
-                    if layer_values[clients_weight_index] > tmp_outlier_top:
-                        # We add +1 outlier count for the client
-                        outlier_counter[clients_weight_index] += 1
-
-            # Calculate which clients had x% or more flagged layers
-            outlier_percent_threshold = .1 # Start with 10% - to move as parameter
-            weight_outliers_index = []
-            for client_outlier_sum in outlier_counter:
-                if client_outlier_sum >= num_layers * outlier_percent_threshold:
-                    weight_outliers_index.append(True)
-                else:
-                    weight_outliers_index.append(False)
-
-            # > FILTER OUT BAD CLIENTS <
-
-            outliers_index = []
-            for o_index in range(len(loss_outliers_index)):
-                if (loss_outliers_index[o_index] == True) or (weight_outliers_index[o_index] == True):
-                    outliers_index.append(True)
-                else:
-                    outliers_index.append(False)
-
-            # This is a metric we can use to validate our accuracy at capturing malicious attacks
-            # print("out_index: ", outliers_index)
-            # print("cor_index: ", corrupt_validation)
-
-            self.corrupt_accuracy.append(self.find_percentage_agreement(outliers_index,corrupt_validation))
-
-            # if outliers_index == corrupt_validation:
-            #     print("-Success-"*5)
-
-            # print("==" * 10)
-
-            # > Remove Clients identified as corrupted <
-            csolns = []
-            for index in range(len(outliers_index)):
-                # print(outliers_index[index])
-                if not outliers_index[index]:
-                    csolns.append(raw_csolns[index])
-
-            # > ========================= <
-
-            # csolns = raw_csolns
+                    csolns.append((np.exp(self.q * loss), diff))
 
             if self.q != 0:
                 avg_updates = self.aggregate(csolns)
@@ -288,10 +162,8 @@ class Server(BaseFedarated):
                     m = self.clients_per_round - expected_num_mali
                     avg_updates = self.mkrum_average(self.clients_per_round - expected_num_mali - 2, m, csolns)
                 else:
-                    # aggregate the weights (Malicious clients have already been filtered out)
                     avg_updates = self.simple_average(csolns)
 
-            # update the global model with our aggregated and filtered weights
+            # update the global model
             for layer in range(len(avg_updates)):
                 self.global_model[layer] += avg_updates[layer]
-
