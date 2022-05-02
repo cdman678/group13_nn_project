@@ -230,9 +230,12 @@ class Server(BaseFedarated):
                     tmp_q3 = np.percentile(layer_values, 75)
                     tmp_iqr = tmp_q3 - tmp_q1
                     tmp_outlier_top = tmp_q3 + (tmp_iqr * 1.5)
+                    # New - Bottom Outliers should still be focusd on for weight analysis
+                    # The way we are aggregating weights, low can still impact the model
+                    tmp_outlier_bot = tmp_q1 - (tmp_iqr * 1.5)
                     # Identify which clients had outlier values for this layer
                     for clients_weight_index in range(len(layer_values)):
-                        if layer_values[clients_weight_index] > tmp_outlier_top:
+                        if (layer_values[clients_weight_index] > tmp_outlier_top) or (layer_values[clients_weight_index] < tmp_outlier_bot):
                             # We add +1 outlier count for the client
                             outlier_counter[clients_weight_index] += 1
 
@@ -260,9 +263,12 @@ class Server(BaseFedarated):
                     tmp_q3 = np.percentile(sum_layer_weights, 75)
                     tmp_iqr = tmp_q3 - tmp_q1
                     tmp_outlier_top = tmp_q3 + (tmp_iqr * 1.5)
+                    # New - Bottom Outliers should still be focusd on for weight analysis
+                    # The way we are aggregating weights, low can still impact the model
+                    tmp_outlier_bot = tmp_q1 - (tmp_iqr * 1.5)
                     # Identify which clients had outlier values for this layer
                     for clients_weight_index in range(len(sum_layer_weights)):
-                        if sum_layer_weights[clients_weight_index] > tmp_outlier_top:
+                        if (sum_layer_weights[clients_weight_index] > tmp_outlier_top) or (sum_layer_weights[clients_weight_index] < tmp_outlier_bot):
                             # We add +1 outlier count for the client
                             outlier_counter[clients_weight_index] += 1
 
