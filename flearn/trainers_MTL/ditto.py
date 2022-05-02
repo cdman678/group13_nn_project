@@ -2,6 +2,7 @@ import numpy as np
 from tqdm import trange, tqdm
 import tensorflow as tf
 import copy
+import datetime
 
 from .fedbase import BaseFedarated
 from flearn.utils.tf_utils import process_grad, cosine_sim, softmax, norm_grad, l2_clip, get_stdev
@@ -23,7 +24,7 @@ class Server(BaseFedarated):
     def __init__(self, params, learner, dataset):
         print('Using global-regularized multi-task learning to Train')
 
-        self.corrupt_input = True  # True = input data for corrupted clients will be altered
+        self.corrupt_input = False  # True = input data for corrupted clients will be altered
         self.corrupt_accuracy = []
 
         self.inner_opt = tf.train.GradientDescentOptimizer(params['learning_rate'])
@@ -86,6 +87,8 @@ class Server(BaseFedarated):
                 tmp_models = []
                 for idx in range(len(self.clients)):
                     tmp_models.append(self.local_models[idx])
+
+                print("Time: ", datetime.datetime.now())
 
                 num_train, num_correct_train, loss_vector = self.train_error(tmp_models)
                 avg_train_loss = np.dot(loss_vector, num_train) / np.sum(num_train)
@@ -213,25 +216,57 @@ class Server(BaseFedarated):
             # Then, if a client was flagged for X percent of the layers, we will label the client as bad
             # Weighted and random attacks are expected to lie outside of the expected range for the majority of layers
 
-            num_layers = len(raw_csolns[0][0])
-
             outlier_counter = [0] * self.clients_per_round
+            outlier_percent_threshold = .1  # Start with 10% - to move as parameter
 
-            # Client #, ? (use 0), layer #
-            for layer in range(num_layers):
-                layer_values = [raw_csolns[client][0][layer] for client in range(self.clients_per_round)]
-                tmp_q1 = np.percentile(layer_values, 25)
-                tmp_q3 = np.percentile(layer_values, 75)
-                tmp_iqr = tmp_q3 - tmp_q1
-                tmp_outlier_top = tmp_q3 + (tmp_iqr * 1.5)
-                # Identify which clients had outlier values for this layer
-                for clients_weight_index in range(len(layer_values)):
-                    if layer_values[clients_weight_index] > tmp_outlier_top:
-                        # We add +1 outlier count for the client
-                        outlier_counter[clients_weight_index] += 1
+            if self.dataset == "vehicle":
+                # As Vehicle is an svm and not a cnn, the "layers" are different formats
+                num_layers = len(raw_csolns[0][0])
+
+                # Client #, ? (use 0), layer #
+                for layer in range(num_layers):
+                    layer_values = [raw_csolns[client][0][layer] for client in range(self.clients_per_round)]
+                    tmp_q1 = np.percentile(layer_values, 25)
+                    tmp_q3 = np.percentile(layer_values, 75)
+                    tmp_iqr = tmp_q3 - tmp_q1
+                    tmp_outlier_top = tmp_q3 + (tmp_iqr * 1.5)
+                    # Identify which clients had outlier values for this layer
+                    for clients_weight_index in range(len(layer_values)):
+                        if layer_values[clients_weight_index] > tmp_outlier_top:
+                            # We add +1 outlier count for the client
+                            outlier_counter[clients_weight_index] += 1
+
+            else:
+                # To reduce time complexity of analyzing all weights in a deep NN,
+                # We can aggregate all weights from each layer for every client
+                # Then, we expect clean clients to product a similar absolute value weight
+                # This primarily is targeted at boosted attacks, but random attacks are likely to fall as outsiders
+                aggregated_weight_matrix = [[0]*len(raw_csolns)] * len(raw_csolns[0])
+
+                for p in range(len(raw_csolns)):  # for each client
+                    for tmp_i, v in enumerate(raw_csolns[p]):
+                        tmp = sum(np.abs(v.astype(np.float64)))
+                        while str(type(tmp)) != "<class 'numpy.float64'>":
+                            tmp = sum(np.abs(tmp.astype(np.float64)))
+                        aggregated_weight_matrix[tmp_i][p] = tmp  # the i-th layer, for client p, summed
+
+                # At tis point, aggregated_weight_matrix is of length n, where n is the number of layers
+                # Each index of aggregated_weight_matrix is of length c, where c is the number of clients
+                # From here we can calculate similar to Vehicle
+                num_layers = len(aggregated_weight_matrix)
+
+                for sum_layer_weights in aggregated_weight_matrix:
+                    tmp_q1 = np.percentile(sum_layer_weights, 25)
+                    tmp_q3 = np.percentile(sum_layer_weights, 75)
+                    tmp_iqr = tmp_q3 - tmp_q1
+                    tmp_outlier_top = tmp_q3 + (tmp_iqr * 1.5)
+                    # Identify which clients had outlier values for this layer
+                    for clients_weight_index in range(len(sum_layer_weights)):
+                        if sum_layer_weights[clients_weight_index] > tmp_outlier_top:
+                            # We add +1 outlier count for the client
+                            outlier_counter[clients_weight_index] += 1
 
             # Calculate which clients had x% or more flagged layers
-            outlier_percent_threshold = .1 # Start with 10% - to move as parameter
             weight_outliers_index = []
             for client_outlier_sum in outlier_counter:
                 if client_outlier_sum >= num_layers * outlier_percent_threshold:
@@ -252,7 +287,7 @@ class Server(BaseFedarated):
             # print("out_index: ", outliers_index)
             # print("cor_index: ", corrupt_validation)
 
-            self.corrupt_accuracy.append(self.find_percentage_agreement(outliers_index,corrupt_validation))
+            self.corrupt_accuracy.append(self.find_percentage_agreement(outliers_index, corrupt_validation))
 
             # if outliers_index == corrupt_validation:
             #     print("-Success-"*5)
