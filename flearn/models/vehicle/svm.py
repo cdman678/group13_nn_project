@@ -9,7 +9,6 @@ from flearn.utils.tf_utils import process_grad
 
 class Model(object):    
     def __init__(self, num_classes, q, optimizer, seed=1):
-
         # params
         self.num_classes = num_classes
 

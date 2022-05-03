@@ -28,7 +28,6 @@ class Server(BaseFedarated):
         self.corrupt_accuracy = []
 
         self.inner_opt = tf.train.GradientDescentOptimizer(params['learning_rate'])
-        # self.inner_opt = tf.train.FtrlOptimizer(params['learning_rate'])
 
         super(Server, self).__init__(params, learner, dataset)
 
@@ -44,7 +43,6 @@ class Server(BaseFedarated):
 
     def train(self):
         print('---{} workers per communication round---'.format(self.clients_per_round))
-
         print("*"*10)
         print(f"Number of Clients Total: {len(self.clients)}")
 
@@ -124,23 +122,16 @@ class Server(BaseFedarated):
                     if self.dynamic_lam:
                         upper_lambda = 40
                         step_size = 1
-                        client_side_learning = .05
 
                         model_tmp = copy.deepcopy(self.local_models[idx])
                         model_best = copy.deepcopy(self.local_models[idx])
                         tmp_loss = 10000
-                        # pick a lambda locally based on validation data
-                        # x = [x / 10 for x in range(1, 21, 1)]  # increase time complexity to get better lambda
-                        # [0.1, 1, 2]
-
+                        # pick a lambda locally based on validation data - Our solution
                         for lam_id, candidate_lam in enumerate([x / 10 for x in range(1, upper_lambda, step_size)]):
                         # for lam_id, candidate_lam in enumerate([0.1, 1, 2]):  # Paper's Solution
                             for layer in range(len(grads[1])):
                                 eff_grad = grads[1][layer] + candidate_lam * (self.local_models[idx][layer] - self.global_model[layer])
-                                model_tmp[layer] = self.local_models[idx][layer] - client_side_learning * eff_grad
-
-                                # Paper's Solution
-                                # model_tmp[layer] = self.local_models[idx][layer] - self.learning_rate * eff_grad
+                                model_tmp[layer] = self.local_models[idx][layer] - self.learning_rate * eff_grad
 
                             c.set_params(model_tmp)
                             l = c.get_val_loss()
@@ -167,7 +158,6 @@ class Server(BaseFedarated):
                 diff = [u - v for (u, v) in zip(w_global_idx, self.global_model)]
 
                 avg_losses.append(sum(client_losses)/self.local_iters)
-
 
                 # send the malicious updates
                 if idx in corrupt_id:
@@ -230,7 +220,7 @@ class Server(BaseFedarated):
                     tmp_q3 = np.percentile(layer_values, 75)
                     tmp_iqr = tmp_q3 - tmp_q1
                     tmp_outlier_top = tmp_q3 + (tmp_iqr * 1.5)
-                    # New - Bottom Outliers should still be focusd on for weight analysis
+                    # Bottom Outliers should still be focused on for weight analysis
                     # The way we are aggregating weights, low can still impact the model
                     tmp_outlier_bot = tmp_q1 - (tmp_iqr * 1.5)
                     # Identify which clients had outlier values for this layer
@@ -263,7 +253,7 @@ class Server(BaseFedarated):
                     tmp_q3 = np.percentile(sum_layer_weights, 75)
                     tmp_iqr = tmp_q3 - tmp_q1
                     tmp_outlier_top = tmp_q3 + (tmp_iqr * 1.5)
-                    # New - Bottom Outliers should still be focusd on for weight analysis
+                    # Bottom Outliers should still be focusd on for weight analysis
                     # The way we are aggregating weights, low can still impact the model
                     tmp_outlier_bot = tmp_q1 - (tmp_iqr * 1.5)
                     # Identify which clients had outlier values for this layer
@@ -295,9 +285,6 @@ class Server(BaseFedarated):
 
             self.corrupt_accuracy.append(self.find_percentage_agreement(outliers_index, corrupt_validation))
 
-            # if outliers_index == corrupt_validation:
-            #     print("-Success-"*5)
-
             # print("==" * 10)
 
             # > Remove Clients identified as corrupted <
@@ -308,8 +295,6 @@ class Server(BaseFedarated):
                     csolns.append(raw_csolns[index])
 
             # > ========================= <
-
-            # csolns = raw_csolns
 
             if self.q != 0:
                 avg_updates = self.aggregate(csolns)

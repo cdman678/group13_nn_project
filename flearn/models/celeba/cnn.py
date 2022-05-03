@@ -47,8 +47,8 @@ class Model(object):
             # activation function for client
             # out = tf.nn.relu(out)
             # New Activation Functions
-            # out = tf.nn.relu6(out)
-            out = tf.nn.tanh(out)
+            out = tf.nn.relu6(out)
+            # out = tf.nn.tanh(out)
         out = tf.reshape(out, (-1, int(np.prod(out.get_shape()[1:]))))
         logits = tf.layers.dense(out, self.num_classes)
         label_ph = tf.placeholder(tf.int64, shape=(None,))
@@ -63,9 +63,6 @@ class Model(object):
         grads_and_vars = optimizer.compute_gradients(loss)
         grads, _ = zip(*grads_and_vars)
         # train_op = optimizer.apply_gradients(grads_and_vars, global_step=tf.train.get_global_step())
-        print("*!*"*30)
-        print(optimizer)
-        print(optimizer.apply_gradients)
         train_op = optimizer.apply_gradients(grads_and_vars, global_step=tf.train.get_global_step())
         eval_metric_ops = tf.count_nonzero(tf.equal(label_ph, tf.argmax(input=logits, axis=1)))
 
