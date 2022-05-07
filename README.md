@@ -3,6 +3,8 @@
 
 This repository contains the code for Group 13's Course Project
 
+To access the online repo (if viewing the zip), visit: https://github.com/cdman678/group13_nn_project
+
 Texas Tech University - CS 5388 - Spring 2022
 
 Caleb Darnell, Semih Cal, Hasan Al-Qudah
